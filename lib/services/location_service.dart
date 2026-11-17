@@ -19,4 +19,12 @@ class LocationService {
       locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
     );
   }
+    Stream<Position> seguirUbicacion() {
+    return Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10, // solo actualiza cada 10 metros
+      ),
+    );
+  }
 }

@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
@@ -13,23 +16,38 @@ class MapaScreen extends StatefulWidget {
 
 class _MapaScreenState extends State<MapaScreen> {
   final LocationService _locationService = LocationService();
+  final Geocoding _geocoding = Geocoding(); // geocoding 5.x: se usa una instancia
   final Set<Marker> _marcadores = {};
   GoogleMapController? _mapController;
+  StreamSubscription<Position>? _subPosicion;
+
   Position? _posicionActual;
+  LatLng? _destino;
+  double? _distanciaMetros;
+  String? _direccion;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _obtenerUbicacionInicial();
+    _iniciar();
   }
 
-  Future<void> _obtenerUbicacionInicial() async {
+  Future<void> _iniciar() async {
     try {
       final pos = await _locationService.obtenerUbicacion();
       if (!mounted) return;
       setState(() => _posicionActual = pos);
       _moverCamaraAlUsuario();
+
+      // Distancia en vivo: se actualiza cuando el usuario se mueve
+      _subPosicion = _locationService.seguirUbicacion().listen((nueva) {
+        if (!mounted) return;
+        setState(() {
+          _posicionActual = nueva;
+          _calcularDistancia();
+        });
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = e.toString());
@@ -44,8 +62,52 @@ class _MapaScreenState extends State<MapaScreen> {
     );
   }
 
+  void _calcularDistancia() {
+    final pos = _posicionActual;
+    final destino = _destino;
+    if (pos == null || destino == null) {
+      _distanciaMetros = null;
+      return;
+    }
+    _distanciaMetros = Geolocator.distanceBetween(
+      pos.latitude,
+      pos.longitude,
+      destino.latitude,
+      destino.longitude,
+    );
+  }
+
+  Future<void> _obtenerDireccion(LatLng punto) async {
+    try {
+      final lugares = await _geocoding.placemarkFromCoordinates(
+        punto.latitude,
+        punto.longitude,
+      );
+      if (!mounted || _destino != punto) return; // el usuario tocó otro punto
+      if (lugares.isEmpty) {
+        setState(() => _direccion = 'Sin dirección disponible');
+        return;
+      }
+      final lugar = lugares.first;
+      final partes = <String>[];
+      final calle = lugar.street;
+      final colonia = lugar.subLocality;
+      if (calle != null && calle.isNotEmpty) partes.add(calle);
+      if (colonia != null && colonia.isNotEmpty) partes.add(colonia);
+      setState(() {
+        _direccion =
+            partes.isEmpty ? 'Sin dirección disponible' : partes.join(', ');
+      });
+    } catch (e) {
+      if (!mounted || _destino != punto) return;
+      setState(() => _direccion = 'No se pudo obtener la dirección');
+    }
+  }
+
   void _agregarMarcador(LatLng punto) {
     setState(() {
+      _destino = punto;
+      _direccion = 'Buscando dirección...';
       _marcadores
         ..clear()
         ..add(
@@ -55,11 +117,26 @@ class _MapaScreenState extends State<MapaScreen> {
             infoWindow: const InfoWindow(title: 'Destino'),
           ),
         );
+      _calcularDistancia();
     });
+    _obtenerDireccion(punto);
+  }
+
+  String _textoDistancia() {
+    final d = _distanciaMetros;
+    if (d == null) return 'Distancia: calculando...';
+    return 'Distancia: ${d.toStringAsFixed(1)} m';
+  }
+
+  String _textoDireccion() {
+    final dir = _direccion;
+    if (dir == null) return 'Dirección:';
+    return 'Dirección: $dir';
   }
 
   @override
   void dispose() {
+    _subPosicion?.cancel();
     _mapController?.dispose();
     super.dispose();
   }
@@ -92,6 +169,26 @@ class _MapaScreenState extends State<MapaScreen> {
                 child: Padding(
                   padding: const EdgeInsets.all(12),
                   child: Text(_error!),
+                ),
+              ),
+            ),
+          if (_destino != null)
+            Positioned(
+              bottom: 16,
+              left: 16,
+              right: 16,
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(_textoDistancia()),
+                      const SizedBox(height: 4),
+                      Text(_textoDireccion()),
+                    ],
+                  ),
                 ),
               ),
             ),
