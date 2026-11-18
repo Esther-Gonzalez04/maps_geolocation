@@ -7,6 +7,8 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import '../services/location_service.dart';
 
+const String _miUbicacionId = 'mi_ubicacion';
+
 class _Punto {
   _Punto({required this.id, required this.nombre, required this.posicion});
 
@@ -31,7 +33,8 @@ class _MapaScreenState extends State<MapaScreen> {
   StreamSubscription<Position>? _subPosicion;
 
   Position? _posicionActual;
-  String? _seleccionadoId;
+  String _origenId = _miUbicacionId;
+  String? _destinoId;
   int _contador = 0;
   String? _error;
 
@@ -67,14 +70,35 @@ class _MapaScreenState extends State<MapaScreen> {
     );
   }
 
-  double? _distanciaA(_Punto punto) {
-    final pos = _posicionActual;
-    if (pos == null) return null;
+  // ---------- Datos ----------
+
+  _Punto? _buscarPunto(String? id) {
+    if (id == null) return null;
+    for (final p in _puntos) {
+      if (p.id == id) return p;
+    }
+    return null;
+  }
+
+  LatLng? _coordenadasDe(String? id) {
+    if (id == null) return null;
+    if (id == _miUbicacionId) {
+      final pos = _posicionActual;
+      if (pos == null) return null;
+      return LatLng(pos.latitude, pos.longitude);
+    }
+    return _buscarPunto(id)?.posicion;
+  }
+
+  double? get _distanciaActual {
+    final a = _coordenadasDe(_origenId);
+    final b = _coordenadasDe(_destinoId);
+    if (a == null || b == null) return null;
     return Geolocator.distanceBetween(
-      pos.latitude,
-      pos.longitude,
-      punto.posicion.latitude,
-      punto.posicion.longitude,
+      a.latitude,
+      a.longitude,
+      b.latitude,
+      b.longitude,
     );
   }
 
@@ -110,6 +134,8 @@ class _MapaScreenState extends State<MapaScreen> {
     setState(() => punto.direccion = texto);
   }
 
+  // ---------- Acciones ----------
+
   void _agregarPunto(LatLng posicion) {
     _contador++;
     final punto = _Punto(
@@ -119,45 +145,70 @@ class _MapaScreenState extends State<MapaScreen> {
     );
     setState(() {
       _puntos.add(punto);
-      _seleccionadoId = punto.id;
+      _destinoId = punto.id; // el nuevo punto queda como destino
     });
     _obtenerDireccion(punto);
   }
 
-  void _seleccionar(String id) {
-    setState(() => _seleccionadoId = id);
+  void _elegirOrigen(String id) {
+    setState(() {
+      _origenId = id;
+      if (_destinoId == id) _destinoId = null;
+    });
+  }
+
+  void _elegirDestino(String id) {
+    setState(() {
+      _destinoId = id;
+      if (_origenId == id) _origenId = _miUbicacionId;
+    });
   }
 
   void _limpiar() {
     setState(() {
       _puntos.clear();
-      _seleccionadoId = null;
+      _origenId = _miUbicacionId;
+      _destinoId = null;
     });
   }
 
-  _Punto? get _puntoSeleccionado {
-    for (final p in _puntos) {
-      if (p.id == _seleccionadoId) return p;
-    }
-    return null;
-  }
+  // ---------- Elementos del mapa ----------
 
   Set<Marker> get _marcadores {
     return _puntos.map((p) {
-      final elegido = p.id == _seleccionadoId;
+      final esOrigen = p.id == _origenId;
+      final esDestino = p.id == _destinoId;
+      double tono = BitmapDescriptor.hueAzure;
+      String texto = 'Toca para elegirlo como destino';
+      if (esOrigen) {
+        tono = BitmapDescriptor.hueGreen;
+        texto = 'Origen';
+      } else if (esDestino) {
+        tono = BitmapDescriptor.hueRed;
+        texto = 'Destino';
+      }
       return Marker(
         markerId: MarkerId(p.id),
         position: p.posicion,
-        icon: BitmapDescriptor.defaultMarkerWithHue(
-          elegido ? BitmapDescriptor.hueRed : BitmapDescriptor.hueAzure,
-        ),
-        infoWindow: InfoWindow(
-          title: p.nombre,
-          snippet: elegido ? 'Destino seleccionado' : 'Toca para elegirlo',
-        ),
-        onTap: () => _seleccionar(p.id),
+        icon: BitmapDescriptor.defaultMarkerWithHue(tono),
+        infoWindow: InfoWindow(title: p.nombre, snippet: texto),
+        onTap: () => _elegirDestino(p.id),
       );
     }).toSet();
+  }
+
+  Set<Polyline> _lineas(Color color) {
+    final a = _coordenadasDe(_origenId);
+    final b = _coordenadasDe(_destinoId);
+    if (a == null || b == null) return {};
+    return {
+      Polyline(
+        polylineId: const PolylineId('medicion'),
+        points: [a, b],
+        width: 4,
+        color: color,
+      ),
+    };
   }
 
   @override
@@ -266,13 +317,35 @@ class _MapaScreenState extends State<MapaScreen> {
     );
   }
 
+  Widget _filaChips(String titulo, List<Widget> chips, TextTheme tt) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(titulo, style: tt.labelMedium),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: chips
+                  .map((c) => Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: c,
+                      ))
+                  .toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _panelInferior(ColorScheme cs, TextTheme tt) {
-    final seleccionado = _puntoSeleccionado;
     final forma = RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(20),
     );
 
-    if (seleccionado == null) {
+    if (_puntos.isEmpty) {
       return Card(
         margin: EdgeInsets.zero,
         elevation: 4,
@@ -285,75 +358,104 @@ class _MapaScreenState extends State<MapaScreen> {
       );
     }
 
+    final origen = _buscarPunto(_origenId);
+    final destino = _buscarPunto(_destinoId);
+
+    final chipsOrigen = <Widget>[
+      ChoiceChip(
+        avatar: const Icon(Icons.my_location, size: 18),
+        label: const Text('Mi ubicación'),
+        selected: _origenId == _miUbicacionId,
+        onSelected: (_) => _elegirOrigen(_miUbicacionId),
+      ),
+      ..._puntos.map(
+        (p) => ChoiceChip(
+          label: Text(p.nombre),
+          selected: p.id == _origenId,
+          onSelected: p.id == _destinoId ? null : (_) => _elegirOrigen(p.id),
+        ),
+      ),
+    ];
+
+    final chipsDestino = _puntos
+        .map(
+          (p) => ChoiceChip(
+            label: Text(p.nombre),
+            selected: p.id == _destinoId,
+            onSelected: p.id == _origenId ? null : (_) => _elegirDestino(p.id),
+          ),
+        )
+        .toList();
+
     return Card(
       margin: EdgeInsets.zero,
       elevation: 4,
       shape: forma,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.place, color: cs.error),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    seleccionado.nombre,
-                    style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.45,
+        ),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.straighten, color: cs.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Medir distancia',
+                      style:
+                          tt.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                    ),
                   ),
+                  Chip(
+                    visualDensity: VisualDensity.compact,
+                    label: Text('${_puntos.length} en el mapa'),
+                  ),
+                ],
+              ),
+              _filaChips('Desde', chipsOrigen, tt),
+              _filaChips('Hasta', chipsDestino, tt),
+              const Divider(height: 20),
+              _filaDato(
+                Icons.route,
+                'Distancia',
+                _destinoId == null
+                    ? 'Elige un punto de destino'
+                    : _formatoDistancia(_distanciaActual),
+                cs,
+                tt,
+              ),
+              if (origen != null)
+                _filaDato(
+                  Icons.trip_origin,
+                  'Dirección de origen (${origen.nombre})',
+                  origen.direccion,
+                  cs,
+                  tt,
                 ),
-                Chip(
-                  visualDensity: VisualDensity.compact,
-                  label: Text('${_puntos.length} en el mapa'),
+              if (destino != null)
+                _filaDato(
+                  Icons.place,
+                  'Dirección de destino (${destino.nombre})',
+                  destino.direccion,
+                  cs,
+                  tt,
                 ),
-              ],
-            ),
-            if (_puntos.length > 1) ...[
-              const SizedBox(height: 4),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: _puntos.map((p) {
-                    return Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: ChoiceChip(
-                        label: Text(p.nombre),
-                        selected: p.id == _seleccionadoId,
-                        onSelected: (_) => _seleccionar(p.id),
-                      ),
-                    );
-                  }).toList(),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _limpiar,
+                  icon: const Icon(Icons.delete_sweep_outlined),
+                  label: const Text('Quitar todos los puntos'),
                 ),
               ),
             ],
-            const Divider(height: 20),
-            _filaDato(
-              Icons.straighten,
-              'Distancia desde tu ubicación',
-              _formatoDistancia(_distanciaA(seleccionado)),
-              cs,
-              tt,
-            ),
-            _filaDato(
-              Icons.home_outlined,
-              'Dirección',
-              seleccionado.direccion,
-              cs,
-              tt,
-            ),
-            const SizedBox(height: 4),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton.icon(
-                onPressed: _limpiar,
-                icon: const Icon(Icons.delete_sweep_outlined),
-                label: const Text('Quitar todos los puntos'),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -382,6 +484,7 @@ class _MapaScreenState extends State<MapaScreen> {
             zoomControlsEnabled: false,
             mapToolbarEnabled: false,
             markers: _marcadores,
+            polylines: _lineas(cs.primary),
             onMapCreated: (ctrl) {
               _mapController = ctrl;
               _moverCamaraAlUsuario();
