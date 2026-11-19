@@ -9,7 +9,7 @@ class LocationService {
     if (perm == LocationPermission.denied) {
       perm = await Geolocator.requestPermission();
     }
-    // Adición mía (no está en el PDF): evita un error si el permiso se negó para siempre
+    
     if (perm == LocationPermission.denied ||
         perm == LocationPermission.deniedForever) {
       return Future.error('Permiso de ubicación denegado');
